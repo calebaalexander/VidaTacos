@@ -10,50 +10,51 @@ import openpyxl
 st.set_page_config(
     page_title="Vida en Tacos Analytics",
     page_icon="🌮",
-    layout="wide",
-    initial_sidebar_state="expanded"
+    layout="wide"
 )
-
-# Custom CSS for better styling
-st.markdown("""
-    <style>
-    .main {
-        padding: 2rem;
-    }
-    .stMetric {
-        background-color: #f0f2f6;
-        padding: 1rem;
-        border-radius: 0.5rem;
-    }
-    .st-tabs {
-        background-color: #ffffff;
-        padding: 1rem;
-        border-radius: 0.5rem;
-    }
-    </style>
-""", unsafe_allow_html=True)
 
 @st.cache_data
 def load_excel_data():
     # Read the Excel file
     excel_file = pd.ExcelFile('data/VidaEnTacos.xlsx')
     
-    # Load all sheets
+    # Load food items
     food_items = pd.read_excel(excel_file, 'FoodItems')
-    sales_2023 = pd.read_excel(excel_file, 'Monthly Sales 2023')
-    sales_2024 = pd.read_excel(excel_file, 'Monthly Sales 2024')
-    employees = pd.read_excel(excel_file, 'Employees')
     
-    # Process sales data
-    def process_sales_data(df, year):
-        melted = pd.melt(df, id_vars=[], var_name='Month', value_name='Sales')
-        melted = melted[melted['Month'] != 'Unnamed: 0']
-        melted['Date'] = pd.to_datetime(melted['Month'] + ' ' + str(year), format='%B %Y')
-        return melted
-
-    sales_2023 = process_sales_data(sales_2023, 2023)
-    sales_2024 = process_sales_data(sales_2024, 2024)
-    sales_data = pd.concat([sales_2023, sales_2024])
+    # Load sales data with specific handling for the structure
+    def process_sales_sheet(sheet_name):
+        df = pd.read_excel(excel_file, sheet_name, header=0)
+        # Drop any completely empty rows
+        df = df.dropna(how='all')
+        # Get only the Total Sales row
+        sales_row = df[df.iloc[:, 0] == 'Total Sales'].iloc[0]
+        # Convert to series with month names as index
+        monthly_data = pd.Series(sales_row.values[1:], index=df.columns[1:])
+        return monthly_data
+    
+    # Process both years
+    sales_2023 = process_sales_sheet('Monthly Sales 2023')
+    sales_2024 = process_sales_sheet('Monthly Sales 2024')
+    
+    # Create sales dataframe
+    sales_2023_df = pd.DataFrame({
+        'Month': sales_2023.index,
+        'Sales': sales_2023.values,
+        'Year': 2023
+    })
+    
+    sales_2024_df = pd.DataFrame({
+        'Month': sales_2024.index,
+        'Sales': sales_2024.values,
+        'Year': 2024
+    })
+    
+    # Combine sales data
+    sales_data = pd.concat([sales_2023_df, sales_2024_df])
+    sales_data['Date'] = pd.to_datetime(sales_data['Month'] + ' ' + sales_data['Year'].astype(str), format='%B %Y')
+    
+    # Load employees
+    employees = pd.read_excel(excel_file, 'Employees')
     
     return food_items, sales_data, employees
 
@@ -64,16 +65,16 @@ try:
     # Title and description
     st.title("🌮 Vida en Tacos Analytics Dashboard")
     
-    # Create tabs for different sections
+    # Create tabs
     tabs = st.tabs(["Sales Analytics", "Menu Analysis", "Employee Dashboard"])
     
     # Sidebar filters
     st.sidebar.header("Global Filters")
-    years = sorted(sales_data['Date'].dt.year.unique())
+    years = sorted(sales_data['Year'].unique())
     selected_year = st.sidebar.selectbox('Select Year', years, index=len(years)-1)
     
     # Filter sales data by year
-    yearly_sales = sales_data[sales_data['Date'].dt.year == selected_year]
+    yearly_sales = sales_data[sales_data['Year'] == selected_year]
     
     # Tab 1: Sales Analytics
     with tabs[0]:
@@ -91,50 +92,36 @@ try:
             st.metric("Avg Monthly Sales", f"${avg_monthly_sales:,.2f}")
         
         with col3:
-            yoy_growth = None
             if selected_year > min(years):
-                prev_year_sales = sales_data[sales_data['Date'].dt.year == selected_year-1]['Sales'].sum()
+                prev_year_sales = sales_data[sales_data['Year'] == selected_year-1]['Sales'].sum()
                 yoy_growth = ((total_sales - prev_year_sales) / prev_year_sales) * 100
                 st.metric("YoY Growth", f"{yoy_growth:,.1f}%")
             else:
                 st.metric("YoY Growth", "N/A")
         
         with col4:
-            peak_month = yearly_sales.loc[yearly_sales['Sales'].idxmax()]
-            st.metric("Peak Month", f"{peak_month['Month']}")
+            peak_month = yearly_sales.loc[yearly_sales['Sales'].idxmax(), 'Month']
+            st.metric("Peak Month", peak_month)
         
         # Sales trend
         st.subheader("Monthly Sales Trend")
         fig_trend = px.line(yearly_sales, x='Date', y='Sales',
                           title=f'Monthly Sales Trend - {selected_year}')
+        fig_trend.update_layout(xaxis_title="Month", yaxis_title="Sales ($)")
         st.plotly_chart(fig_trend, use_container_width=True)
         
         # Year-over-Year Comparison
         st.subheader("Year-over-Year Comparison")
-        pivot_sales = sales_data.pivot(index='Month', columns=sales_data['Date'].dt.year, values='Sales')
-        
-        fig_yoy = go.Figure()
-        for year in pivot_sales.columns:
-            fig_yoy.add_trace(go.Scatter(
-                x=pivot_sales.index,
-                y=pivot_sales[year],
-                name=str(year),
-                mode='lines+markers'
-            ))
-        
-        fig_yoy.update_layout(
-            title='Monthly Sales Comparison Across Years',
-            xaxis_title='Month',
-            yaxis_title='Sales ($)',
-            hovermode='x unified'
-        )
+        fig_yoy = px.line(sales_data, x='Month', y='Sales', color='Year',
+                         title='Monthly Sales Comparison Across Years')
+        fig_yoy.update_layout(xaxis_title="Month", yaxis_title="Sales ($)")
         st.plotly_chart(fig_yoy, use_container_width=True)
     
     # Tab 2: Menu Analysis
     with tabs[1]:
         st.header("Menu Analytics")
         
-        # Category filter for menu
+        # Category filter
         categories = ['All'] + sorted(food_items['Category'].unique().tolist())
         selected_category = st.selectbox('Select Category', categories)
         
@@ -179,67 +166,44 @@ try:
         else:
             filtered_menu = food_items
         
-        st.dataframe(
-            filtered_menu.style.format({
-                'Price': '${:.2f}'
-            }),
-            use_container_width=True
-        )
+        st.dataframe(filtered_menu.style.format({'Price': '${:.2f}'}),
+                    use_container_width=True)
     
     # Tab 3: Employee Dashboard
     with tabs[2]:
         st.header("Employee Analytics")
         
-        # Employee metrics
-        col1, col2, col3 = st.columns(3)
-        
-        with col1:
-            total_employees = len(employees)
-            st.metric("Total Employees", total_employees)
-        
-        with col2:
-            if 'Position' in employees.columns:
-                positions = len(employees['Position'].unique())
-                st.metric("Different Positions", positions)
-        
-        with col3:
-            if 'Start Date' in employees.columns:
-                avg_tenure = (pd.Timestamp.now() - pd.to_datetime(employees['Start Date'])).mean()
-                st.metric("Average Tenure", f"{avg_tenure.days / 365:.1f} years")
-        
-        # Employee visualizations
-        col1, col2 = st.columns(2)
-        
-        with col1:
+        if not employees.empty:
+            # Employee metrics
+            col1, col2, col3 = st.columns(3)
+            
+            with col1:
+                total_employees = len(employees)
+                st.metric("Total Employees", total_employees)
+            
+            with col2:
+                if 'Position' in employees.columns:
+                    positions = len(employees['Position'].unique())
+                    st.metric("Different Positions", positions)
+            
+            with col3:
+                if 'Start Date' in employees.columns:
+                    avg_tenure = (pd.Timestamp.now() - pd.to_datetime(employees['Start Date'])).mean()
+                    st.metric("Average Tenure", f"{avg_tenure.days / 365:.1f} years")
+            
+            # Employee visualizations
             if 'Position' in employees.columns:
                 st.subheader("Employees by Position")
-                position_data = employees.groupby('Position').size().reset_index()
-                position_data.columns = ['Position', 'Count']
-                
-                fig_positions = px.pie(position_data, values='Count', names='Position',
+                position_data = employees['Position'].value_counts()
+                fig_positions = px.pie(values=position_data.values, names=position_data.index,
                                      title='Employee Distribution by Position')
                 st.plotly_chart(fig_positions, use_container_width=True)
-        
-        with col2:
-            if 'Start Date' in employees.columns:
-                st.subheader("Employee Tenure Distribution")
-                employees['Tenure'] = (pd.Timestamp.now() - pd.to_datetime(employees['Start Date'])).dt.days / 365
-                fig_tenure = px.histogram(employees, x='Tenure',
-                                        title='Employee Tenure Distribution (Years)',
-                                        nbins=10)
-                st.plotly_chart(fig_tenure, use_container_width=True)
-        
-        # Employee table
-        st.subheader("Employee Directory")
-        if 'Salary' in employees.columns:
-            employees_display = employees.style.format({
-                'Salary': '${:,.2f}',
-                'Tenure': '{:.1f} years'
-            })
+            
+            # Employee table
+            st.subheader("Employee Directory")
+            st.dataframe(employees, use_container_width=True)
         else:
-            employees_display = employees
-        
-        st.dataframe(employees_display, use_container_width=True)
+            st.info("No employee data available")
     
     # Download options in sidebar
     st.sidebar.markdown("### Download Data")
@@ -266,7 +230,7 @@ except Exception as e:
     st.error(f"Error loading data: {str(e)}")
     st.markdown("""
         ### Expected Excel Structure:
-        The app expects an Excel file named 'VidaEnTacos.xlsx' with the following sheets:
+        The app expects an Excel file named 'VidaEnTacos.xlsx' in the data/ directory with the following sheets:
         1. FoodItems:
            - FoodItem (name)
            - Category
@@ -275,7 +239,7 @@ except Exception as e:
         
         2. Monthly Sales 2023/2024:
            - Columns for each month (January through December)
-           - Sales data in rows
+           - Total Sales row with monthly values
            
         3. Employees:
            - Employee information including Position, Start Date, etc.
