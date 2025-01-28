@@ -20,29 +20,30 @@ def load_excel_data():
         excel_file = pd.ExcelFile('data/VidaEnTacos.xlsx')
         
         # Load monthly sales data with specific structure
-        def load_sales_sheet(year):
-            sheet_name = f'Monthly Sales {year}'
-            df = pd.read_excel(excel_file, sheet_name, header=0)
-            # Get the row with Total Sales
-            sales_row = df[df.iloc[:, 0] == 'Total Sales'].iloc[0]
-            # Convert to monthly data
-            monthly_data = pd.Series(sales_row.values[1:], 
-                                   index=['January', 'February', 'March', 'April', 'May', 'June',
-                                         'July', 'August', 'September', 'October', 'November', 'December'])
+        def load_sales_sheet(sheet_name):
+            # Read the sheet
+            df = pd.read_excel(excel_file, sheet_name)
+            # Get the Total Sales row, excluding the first column
+            sales_row = df[df.iloc[:, 0] == 'Total Sales'].iloc[0, 1:]
+            # Create a series with proper month names
+            months = ['January', 'February', 'March', 'April', 'May', 'June',
+                     'July', 'August', 'September', 'October', 'November', 'December']
+            monthly_data = pd.Series(index=months, data=sales_row.values)
             return monthly_data
 
         # Load sales data for both years
-        sales_2024 = load_sales_sheet(2024)
-        sales_2023 = load_sales_sheet(2023)
+        sales_2024 = load_sales_sheet('Monthly Sales 2024')
+        sales_2023 = load_sales_sheet('Monthly Sales 2023')
         
         # Load employee data
         employees = pd.read_excel(excel_file, 'Employees')
         
-        # Process item data from ItemCode sheet
-        items_monthly = pd.read_excel(excel_file, 'Monthly Sales 2024', skiprows=3)
-        items_monthly = items_monthly[items_monthly['ItemName'].notna()]
-
-        return sales_2024, sales_2023, employees, items_monthly
+        # Load item sales data
+        items_data = pd.read_excel(excel_file, sheet_name='Monthly Sales 2024', skiprows=3)
+        # Clean up the items data
+        items_data = items_data[items_data['ItemCode'].notna()]  # Remove rows without item codes
+        
+        return sales_2024, sales_2023, employees, items_data
         
     except Exception as e:
         st.error(f"Error processing Excel file: {str(e)}")
@@ -50,7 +51,7 @@ def load_excel_data():
 
 try:
     # Load data
-    sales_2024, sales_2023, employees, items_monthly = load_excel_data()
+    sales_2024, sales_2023, employees, items_data = load_excel_data()
     
     if sales_2024 is not None:
         # Title
@@ -87,12 +88,11 @@ try:
             # Sales trends
             st.subheader("Monthly Sales Trends")
             
-            # Create monthly comparison chart
             fig = go.Figure()
             
             # Add 2024 data
             fig.add_trace(go.Scatter(
-                x=sales_2024.index,
+                x=list(sales_2024.index),
                 y=sales_2024.values,
                 name='2024',
                 line=dict(color='#1f77b4')
@@ -100,7 +100,7 @@ try:
             
             # Add 2023 data
             fig.add_trace(go.Scatter(
-                x=sales_2023.index,
+                x=list(sales_2023.index),
                 y=sales_2023.values,
                 name='2023',
                 line=dict(color='#ff7f0e')
@@ -121,7 +121,7 @@ try:
             monthly_growth = sales_2024.pct_change() * 100
             
             fig_growth = px.bar(
-                x=monthly_growth.index[1:],  # Skip first month as it has no growth rate
+                x=monthly_growth.index[1:],
                 y=monthly_growth[1:],
                 title='Month-over-Month Growth Rate (2024)',
                 labels={'x': 'Month', 'y': 'Growth Rate (%)'}
@@ -133,26 +133,29 @@ try:
         with tab2:
             st.header("Menu Analytics")
             
-            if items_monthly is not None:
-                # Category performance
-                category_totals = items_monthly.groupby('Category')['Total Items'].sum()
+            if items_data is not None:
+                # Prepare category data
+                items_by_category = items_data.groupby('Category').size().reset_index()
+                items_by_category.columns = ['Category', 'Count']
                 
                 col1, col2 = st.columns(2)
                 
                 with col1:
-                    st.subheader("Sales by Category")
-                    fig_cat = px.pie(values=category_totals.values,
-                                   names=category_totals.index,
-                                   title='Items Sold by Category')
+                    st.subheader("Items by Category")
+                    fig_cat = px.pie(items_by_category,
+                                   values='Count',
+                                   names='Category',
+                                   title='Menu Distribution by Category')
                     st.plotly_chart(fig_cat, use_container_width=True)
                 
                 with col2:
-                    st.subheader("Top Selling Items")
-                    top_items = items_monthly.nlargest(10, 'Total Items')
+                    st.subheader("Top Items")
+                    # Calculate total sales for January as an example
+                    top_items = items_data.nlargest(10, 'January')
                     fig_top = px.bar(top_items,
                                    x='ItemName',
-                                   y='Total Items',
-                                   title='Top 10 Items by Sales Volume')
+                                   y='January',
+                                   title='Top 10 Items (January Sales)')
                     fig_top.update_layout(xaxis_tickangle=45)
                     st.plotly_chart(fig_top, use_container_width=True)
 
@@ -201,8 +204,8 @@ try:
         with tab4:
             st.header("Financial Analytics")
             
-            # Calculate financial metrics
             if employees is not None:
+                # Calculate financial metrics
                 weekly_payroll = employees['Weekly Pay'].sum()
                 monthly_payroll = weekly_payroll * 4
                 monthly_sales = sales_2024.mean()
@@ -226,7 +229,7 @@ except Exception as e:
     st.markdown("""
         ### Dashboard Requirements:
         1. Excel file named 'VidaEnTacos.xlsx' in the data/ directory with:
-           - Monthly sales data
+           - Monthly sales data (2023 and 2024)
            - Employee information
            - Menu items and categories
         2. Proper data structure in each sheet
