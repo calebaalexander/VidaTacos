@@ -37,27 +37,22 @@ def load_excel_data():
         # Load employee data
         employees = pd.read_excel(excel_file, 'Employees')
         
-        # Load item sales data
-        items_data = pd.read_excel(excel_file, 'Monthly Sales 2024', skiprows=3)
-        items_data = items_data[items_data['ItemCode'].notna()]
-        
-        return sales_2024, sales_2023, employees, items_data
+        return sales_2024, sales_2023, employees
         
     except Exception as e:
         st.error(f"Error processing Excel file: {str(e)}")
-        return None, None, None, None
+        return None, None, None
 
 try:
     # Load data
-    sales_2024, sales_2023, employees, items_data = load_excel_data()
+    sales_2024, sales_2023, employees = load_excel_data()
     
     if sales_2024 is not None:
         # Title
         st.title("🌮 Vida en Tacos Analytics Dashboard")
         
         # Create tabs
-        tab1, tab2, tab3, tab4 = st.tabs(["Sales Analytics", "Menu Analysis", 
-                                         "Employee Analytics", "Financial Metrics"])
+        tab1, tab2, tab3 = st.tabs(["Sales Analytics", "Employee Analytics", "Financial Metrics"])
         
         # Tab 1: Sales Analytics
         with tab1:
@@ -126,54 +121,9 @@ try:
             )
             
             st.plotly_chart(fig_growth, use_container_width=True)
-
-        # Tab 2: Menu Analysis
+        
+        # Tab 2: Employee Analytics
         with tab2:
-            st.header("Menu Analytics")
-            
-            if items_data is not None:
-                # Category distribution
-                categories = items_data['ItemCode'].str[0:3].value_counts()
-                category_names = {
-                    'APP': 'Appetizers',
-                    'TAC': 'Tacos',
-                    'ENT': 'Entrees',
-                    'SID': 'Sides',
-                    'DES': 'Desserts',
-                    'BEE': 'Beer',
-                    'LIQ': 'Cocktails'
-                }
-                
-                col1, col2 = st.columns(2)
-                
-                with col1:
-                    st.subheader("Menu Distribution")
-                    fig_cat = px.pie(
-                        values=categories.values,
-                        names=[category_names.get(cat, cat) for cat in categories.index],
-                        title='Items by Category'
-                    )
-                    st.plotly_chart(fig_cat, use_container_width=True)
-                
-                with col2:
-                    st.subheader("Top Items")
-                    # Sum all monthly sales for each item
-                    monthly_cols = ['January', 'February', 'March', 'April', 'May', 'June',
-                                  'July', 'August', 'September', 'October', 'November', 'December']
-                    items_data['Total Sales'] = items_data[monthly_cols].sum(axis=1)
-                    top_items = items_data.nlargest(10, 'Total Sales')
-                    
-                    fig_top = px.bar(
-                        top_items,
-                        x='ItemName',
-                        y='Total Sales',
-                        title='Top 10 Items by Total Sales'
-                    )
-                    fig_top.update_layout(xaxis_tickangle=45)
-                    st.plotly_chart(fig_top, use_container_width=True)
-
-        # Tab 3: Employee Analytics
-        with tab3:
             st.header("Employee Analytics")
             
             if employees is not None:
@@ -212,9 +162,19 @@ try:
                                         yaxis_title='Weekly Pay ($)',
                                         yaxis_tickformat='$,.0f')
                 st.plotly_chart(fig_payroll, use_container_width=True)
+                
+                # Employee table
+                st.subheader("Employee Schedule Overview")
+                st.dataframe(
+                    employees[['FirstName', 'LastName', 'Role', 'Hourly', 'WeeklyHours', 'Weekly Pay']]
+                    .style.format({
+                        'Hourly': '${:.2f}',
+                        'Weekly Pay': '${:.2f}'
+                    })
+                )
 
-        # Tab 4: Financial Metrics
-        with tab4:
+        # Tab 3: Financial Metrics
+        with tab3:
             st.header("Financial Analytics")
             
             if employees is not None:
@@ -236,6 +196,43 @@ try:
                 
                 with col3:
                     st.metric("Monthly Labor Cost", f"${monthly_payroll:,.2f}")
+                
+                # Monthly financial trends
+                st.subheader("Monthly Financial Analysis")
+                monthly_metrics = pd.DataFrame({
+                    'Sales': sales_2024,
+                    'Labor Cost': monthly_payroll
+                })
+                monthly_metrics['Gross Profit'] = monthly_metrics['Sales'] - monthly_metrics['Labor Cost']
+                monthly_metrics['Labor Cost %'] = (monthly_metrics['Labor Cost'] / monthly_metrics['Sales']) * 100
+                
+                fig_metrics = go.Figure()
+                fig_metrics.add_trace(go.Bar(
+                    name='Sales',
+                    x=monthly_metrics.index,
+                    y=monthly_metrics['Sales'],
+                    marker_color='#1f77b4'
+                ))
+                fig_metrics.add_trace(go.Bar(
+                    name='Labor Cost',
+                    x=monthly_metrics.index,
+                    y=monthly_metrics['Labor Cost'],
+                    marker_color='#ff7f0e'
+                ))
+                fig_metrics.add_trace(go.Bar(
+                    name='Gross Profit',
+                    x=monthly_metrics.index,
+                    y=monthly_metrics['Gross Profit'],
+                    marker_color='#2ca02c'
+                ))
+                
+                fig_metrics.update_layout(
+                    title='Monthly Financial Breakdown',
+                    barmode='group',
+                    yaxis_tickformat='$,.0f'
+                )
+                
+                st.plotly_chart(fig_metrics, use_container_width=True)
 
 except Exception as e:
     st.error(f"Dashboard Error: {str(e)}")
@@ -244,6 +241,5 @@ except Exception as e:
         1. Excel file named 'VidaEnTacos.xlsx' in the data/ directory with:
            - Monthly sales data (2023 and 2024)
            - Employee information
-           - Menu items and categories
         2. Proper data structure in each sheet
     """)
