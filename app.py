@@ -19,22 +19,27 @@ def load_excel_data():
         # Read the Excel file
         excel_file = pd.ExcelFile('data/VidaEnTacos.xlsx')
         
-        # Load food items
-        food_items = pd.read_excel(excel_file, 'FoodItems', skiprows=1)  # Skip the empty first row
+        # Load food items - skip first two rows (header and empty row)
+        food_items = pd.read_excel(excel_file, 'FoodItems', skiprows=[1])
+        # Drop any completely empty rows
+        food_items = food_items.dropna(how='all')
+        # Remove any rows where FoodItem or Category is null
+        food_items = food_items.dropna(subset=['FoodItem', 'Category'])
         
         # Load and process sales data
         def process_sales_sheet(sheet_name, year):
             # Read the sheet
             df = pd.read_excel(excel_file, sheet_name)
-            # Find the Total Sales row
-            sales_data = df[df.iloc[:, 0] == 'Total Sales'].iloc[0, 1:].reset_index()
-            # Rename columns
-            sales_data.columns = ['Month', 'Sales']
-            # Add year
-            sales_data['Year'] = year
-            # Convert sales to numeric
-            sales_data['Sales'] = pd.to_numeric(sales_data['Sales'])
-            return sales_data
+            # Find the Total Sales row and get monthly values
+            sales_row = df[df.iloc[:, 0] == 'Total Sales'].iloc[0, 1:]
+            # Create a DataFrame with months and sales
+            monthly_data = pd.DataFrame({
+                'Month': ['January', 'February', 'March', 'April', 'May', 'June', 
+                         'July', 'August', 'September', 'October', 'November', 'December'],
+                'Sales': sales_row.values
+            })
+            monthly_data['Year'] = year
+            return monthly_data
         
         # Process both years
         sales_2023 = process_sales_sheet('Monthly Sales 2023', 2023)
@@ -43,11 +48,15 @@ def load_excel_data():
         # Combine sales data
         sales_data = pd.concat([sales_2023, sales_2024], ignore_index=True)
         
-        # Convert month names to dates
+        # Convert month names to dates for proper sorting
         sales_data['Date'] = pd.to_datetime(sales_data['Month'] + ' ' + sales_data['Year'].astype(str), format='%B %Y')
         
         # Load employees
-        employees = pd.read_excel(excel_file, 'Employees')
+        try:
+            employees = pd.read_excel(excel_file, 'Employees')
+            employees = employees.dropna(how='all')  # Remove completely empty rows
+        except:
+            employees = pd.DataFrame()  # Empty DataFrame if sheet doesn't exist
         
         return food_items, sales_data, employees
         
@@ -98,12 +107,12 @@ try:
                     st.metric("YoY Growth", "N/A")
             
             with col4:
-                peak_month_row = yearly_sales.loc[yearly_sales['Sales'].idxmax()]
-                st.metric("Peak Month", peak_month_row['Month'])
+                peak_month_idx = yearly_sales['Sales'].idxmax()
+                st.metric("Peak Month", yearly_sales.loc[peak_month_idx, 'Month'])
             
             # Sales trend
             st.subheader("Monthly Sales Trend")
-            fig_trend = px.line(yearly_sales, x='Date', y='Sales',
+            fig_trend = px.line(yearly_sales, x='Month', y='Sales',
                               title=f'Monthly Sales Trend - {selected_year}')
             fig_trend.update_layout(xaxis_title="Month", 
                                   yaxis_title="Sales ($)",
@@ -118,6 +127,14 @@ try:
                                 yaxis_title="Sales ($)",
                                 yaxis_tickformat='$,.0f')
             st.plotly_chart(fig_yoy, use_container_width=True)
+            
+            # Monthly Growth Analysis
+            st.subheader("Monthly Growth Analysis")
+            yearly_sales['Monthly Growth'] = yearly_sales['Sales'].pct_change() * 100
+            fig_growth = px.bar(yearly_sales.dropna(), x='Month', y='Monthly Growth',
+                              title=f'Month-over-Month Growth Rate - {selected_year}')
+            fig_growth.update_layout(yaxis_title="Growth Rate (%)")
+            st.plotly_chart(fig_growth, use_container_width=True)
         
         # Tab 2: Menu Analysis
         with tabs[1]:
@@ -147,7 +164,7 @@ try:
             
             with col1:
                 st.subheader("Menu Categories")
-                category_data = food_items.groupby('Category').size().reset_index()
+                category_data = food_items['Category'].value_counts().reset_index()
                 category_data.columns = ['Category', 'Count']
                 
                 fig_categories = px.pie(category_data, values='Count', names='Category',
@@ -178,7 +195,7 @@ try:
         with tabs[2]:
             st.header("Employee Analytics")
             
-            if employees is not None and not employees.empty:
+            if not employees.empty:
                 # Employee metrics
                 col1, col2, col3 = st.columns(3)
                 
